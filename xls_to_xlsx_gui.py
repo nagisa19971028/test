@@ -6,6 +6,14 @@ from tkinter import filedialog, messagebox
 import os
 import xlrd
 import openpyxl
+from openpyxl.styles import Font
+
+
+def _xls_font(wb_xls, cell) -> tuple:
+    """xlrdのセルからフォント情報 (size_pt, bold, italic) を返す。"""
+    xf = wb_xls.xf_list[cell.xf_index]
+    font = wb_xls.font_list[xf.font_index]
+    return (font.height / 20, bool(font.bold), bool(font.italic))
 
 
 def convert(src: str, dst: str | None = None) -> str:
@@ -38,7 +46,12 @@ def convert(src: str, dst: str | None = None) -> str:
                         value = xlrd.xldate_as_datetime(value, wb_xls.datemode)
                     except Exception:
                         pass
-                ws_xlsx.cell(row=row_idx + 1, column=col_idx + 1, value=value)
+
+                out_cell = ws_xlsx.cell(row=row_idx + 1, column=col_idx + 1, value=value)
+
+                # フォント（サイズ・太字・斜体）をコピー
+                size, bold, italic = _xls_font(wb_xls, cell)
+                out_cell.font = Font(size=size, bold=bold, italic=italic)
 
     wb_xlsx.save(dst)
     return dst
@@ -64,22 +77,36 @@ def verify(src: str, dst: str) -> list[str]:
 
         for row_idx in range(ws_xls.nrows):
             for col_idx in range(ws_xls.ncols):
+                loc = f"シート「{sheet_name}」行{row_idx+1} 列{col_idx+1}"
                 cell = ws_xls.cell(row_idx, col_idx)
+                out_cell = ws_xlsx.cell(row=row_idx + 1, column=col_idx + 1)
+
+                # 値の比較
                 xls_val = cell.value
                 if cell.ctype == xlrd.XL_CELL_DATE:
                     try:
                         xls_val = xlrd.xldate_as_datetime(xls_val, wb_xls.datemode)
                     except Exception:
                         pass
-
-                xlsx_val = ws_xlsx.cell(row=row_idx + 1, column=col_idx + 1).value
-
-                # 空文字とNoneは同一扱い
+                xlsx_val = out_cell.value
                 xls_norm = None if xls_val == "" else xls_val
                 xlsx_norm = None if xlsx_val == "" else xlsx_val
                 if xls_norm != xlsx_norm:
-                    loc = f"シート「{sheet_name}」行{row_idx+1} 列{col_idx+1}"
-                    diffs.append(f"{loc}: 変換前={xls_val!r} / 変換後={xlsx_val!r}")
+                    diffs.append(f"{loc} 値: 変換前={xls_val!r} / 変換後={xlsx_val!r}")
+
+                # フォントの比較
+                xls_size, xls_bold, xls_italic = _xls_font(wb_xls, cell)
+                xlsx_font = out_cell.font
+                xlsx_size = xlsx_font.size or 11.0
+                xlsx_bold = bool(xlsx_font.bold)
+                xlsx_italic = bool(xlsx_font.italic)
+
+                if abs(xls_size - xlsx_size) >= 0.5:
+                    diffs.append(f"{loc} フォントサイズ: 変換前={xls_size}pt / 変換後={xlsx_size}pt")
+                if xls_bold != xlsx_bold:
+                    diffs.append(f"{loc} 太字: 変換前={xls_bold} / 変換後={xlsx_bold}")
+                if xls_italic != xlsx_italic:
+                    diffs.append(f"{loc} 斜体: 変換前={xls_italic} / 変換後={xlsx_italic}")
 
         for col_idx, col_info in ws_xls.colinfo_map.items():
             if col_info.width == 0:
