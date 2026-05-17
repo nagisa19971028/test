@@ -16,7 +16,7 @@ def convert(src: str, dst: str | None = None) -> str:
 
     wb_xls = xlrd.open_workbook(src, formatting_info=True)
     wb_xlsx = openpyxl.Workbook()
-    wb_xlsx.remove(wb_xlsx.active)  # デフォルトシートを削除
+    wb_xlsx.remove(wb_xlsx.active)
 
     for sheet_name in wb_xls.sheet_names():
         ws_xls = wb_xls.sheet_by_name(sheet_name)
@@ -37,19 +37,68 @@ def convert(src: str, dst: str | None = None) -> str:
             for col_idx in range(ws_xls.ncols):
                 cell = ws_xls.cell(row_idx, col_idx)
                 value = cell.value
-
-                # 日付型 (xlrd type 3) を文字列に変換
                 if cell.ctype == xlrd.XL_CELL_DATE:
                     try:
                         dt = xlrd.xldate_as_datetime(value, wb_xls.datemode)
                         value = dt
                     except Exception:
                         pass
-
                 ws_xlsx.cell(row=row_idx + 1, column=col_idx + 1, value=value)
 
     wb_xlsx.save(dst)
     return dst
+
+
+def verify(src: str, dst: str) -> list[str]:
+    """変換前後のファイルを比較し、差異のリストを返す。空リストなら一致。"""
+    diffs = []
+
+    wb_xls = xlrd.open_workbook(src, formatting_info=True)
+    wb_xlsx = openpyxl.load_workbook(dst)
+
+    xls_sheets = wb_xls.sheet_names()
+    xlsx_sheets = wb_xlsx.sheetnames
+
+    if xls_sheets != xlsx_sheets:
+        diffs.append(f"シート構成が異なります: {xls_sheets} → {xlsx_sheets}")
+        return diffs
+
+    for sheet_name in xls_sheets:
+        ws_xls = wb_xls.sheet_by_name(sheet_name)
+        ws_xlsx = wb_xlsx[sheet_name]
+
+        for row_idx in range(ws_xls.nrows):
+            for col_idx in range(ws_xls.ncols):
+                cell = ws_xls.cell(row_idx, col_idx)
+                xls_val = cell.value
+                if cell.ctype == xlrd.XL_CELL_DATE:
+                    try:
+                        xls_val = xlrd.xldate_as_datetime(xls_val, wb_xls.datemode)
+                    except Exception:
+                        pass
+
+                xlsx_val = ws_xlsx.cell(row=row_idx + 1, column=col_idx + 1).value
+
+                # 空文字とNoneは同一扱い
+                xls_norm = None if xls_val == "" else xls_val
+                xlsx_norm = None if xlsx_val == "" else xlsx_val
+                if xls_norm != xlsx_norm:
+                    loc = f"シート「{sheet_name}」行{row_idx+1} 列{col_idx+1}"
+                    diffs.append(f"{loc}: 変換前={xls_val!r} / 変換後={xlsx_val!r}")
+
+        # 列幅の検証
+        for col_idx, col_info in ws_xls.colinfo_map.items():
+            if col_info.width == 0:
+                continue
+            expected = round(col_info.width / 256, 2)
+            letter = openpyxl.utils.get_column_letter(col_idx + 1)
+            actual = round(ws_xlsx.column_dimensions[letter].width, 2)
+            if abs(expected - actual) >= 0.1:
+                diffs.append(
+                    f"シート「{sheet_name}」列{letter} 列幅: 変換前={expected} / 変換後={actual}"
+                )
+
+    return diffs
 
 
 def main():
@@ -69,6 +118,16 @@ def main():
 
     output = convert(src, dst)
     print(f"変換完了: {src} → {output}")
+
+    print("差異チェック中...")
+    diffs = verify(src, output)
+    if diffs:
+        print(f"[警告] {len(diffs)} 件の差異が見つかりました:")
+        for d in diffs:
+            print(f"  - {d}")
+        sys.exit(2)
+    else:
+        print("差異なし: 変換前後のデータは完全に一致しています。")
 
 
 if __name__ == "__main__":
