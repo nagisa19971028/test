@@ -14,13 +14,24 @@ def convert(src: str, dst: str | None = None) -> str:
     if dst is None:
         dst = os.path.splitext(src)[0] + ".xlsx"
 
-    wb_xls = xlrd.open_workbook(src)
+    wb_xls = xlrd.open_workbook(src, formatting_info=True)
     wb_xlsx = openpyxl.Workbook()
     wb_xlsx.remove(wb_xlsx.active)  # デフォルトシートを削除
 
     for sheet_name in wb_xls.sheet_names():
         ws_xls = wb_xls.sheet_by_name(sheet_name)
         ws_xlsx = wb_xlsx.create_sheet(title=sheet_name)
+
+        # 列幅をコピー（XLS単位: 1/256文字幅 → XLSX単位: 文字幅）
+        for col_idx, col_info in ws_xls.colinfo_map.items():
+            if col_info.width > 0:
+                col_letter = openpyxl.utils.get_column_letter(col_idx + 1)
+                ws_xlsx.column_dimensions[col_letter].width = col_info.width / 256
+
+        # 行高をコピー（XLS単位: 1/20ポイント → XLSX単位: ポイント）
+        for row_idx, row_info in ws_xls.rowinfo_map.items():
+            if row_info.height > 0:
+                ws_xlsx.row_dimensions[row_idx + 1].height = row_info.height / 20
 
         for row_idx in range(ws_xls.nrows):
             for col_idx in range(ws_xls.ncols):
